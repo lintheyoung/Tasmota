@@ -16,7 +16,7 @@
 ;extra_configs           = platformio_tasmota_user_env.ini
 
 ; *** Build/upload environment
-default_envs            = tasmota32c3-mi32
+default_envs            = tasmota32s3-mi32
 ; *** Uncomment the line(s) below to select version(s)
 ;                          tasmota
 ;                          tasmota-debug
