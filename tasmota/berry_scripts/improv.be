@@ -35,7 +35,7 @@ class IMPROV : Driver
         BLE.serv_cb(cbp,cbuf)
         BLE.set_svc(self.imp_svc)
         self.current_func = /->self.add_8001()
-        print("BLE: wifi-improv ready for connection")
+        print("[IMPROV] BLE: wifi-improv ready for connection")
         self.pin_ready = false
         self.msg_buffer = []
         self.imp_state = 2 # Auto-authorized (skip button press)
@@ -43,6 +43,7 @@ class IMPROV : Driver
         self.running_WiFi_scan = false
         self.ble_server_up = false
         self.testing_wifi = false
+        self.AP_list = nil  # Initialize as nil - will be set to array when scan completes
     end
 
     def every_50ms()
@@ -59,6 +60,7 @@ class IMPROV : Driver
             end
         else
             if self.AP_list != nil
+                print("[IMPROV-DEBUG] every_100ms: AP_list is not nil, calling sendAPInfo()")
                 self.sendAPInfo()
             end
         end
@@ -100,17 +102,22 @@ class IMPROV : Driver
 
     def sendRPCresult()
         # send_buffer holds encoded RPC command
-        if size(self.send_buffer) > 19
+        var payload_size = size(self.send_buffer)
+
+        if payload_size > 20
+            # Send first 20 bytes
             cbuf[0] = 20
-            cbuf.setbytes(1,self.send_buffer[0..19])
+            cbuf.setbytes(1, self.send_buffer[0..19])
             self.send_buffer = self.send_buffer[20..]
-            print("Send Buf chunk 20", cbuf[0..20])
+            print("[IMPROV] Send chunk 20 bytes:", cbuf[1..20].tohex())
         else
-            cbuf[0] = size(self.send_buffer)
-            cbuf.setbytes(1,self.send_buffer)
+            # Send remaining bytes (could be full message if <= 20 bytes)
+            cbuf[0] = payload_size
+            cbuf.setbytes(1, self.send_buffer)
+            print("[IMPROV] Send final", payload_size, "bytes:", self.send_buffer.tohex())
             self.send_buffer = nil
-            print("Send Buf final",cbuf[0..20])
         end
+
         BLE.set_svc(self.imp_svc)
         BLE.set_chr(self.result_chr)
         BLE.run(211)
@@ -156,22 +163,48 @@ class IMPROV : Driver
 
     def startWifiScan()
         if self.running_WiFi_scan == true return end
+        print("[IMPROV] Starting WiFi scan...")
+        self.AP_list = nil  # Clear list while scanning
         tasmota.cmd("WiFiScan 1",true)
         self.running_WiFi_scan = true
-        tasmota.set_timer(5500,/->self.readWifiScan())
+        # Check scan result every 1 second (faster response)
+        tasmota.set_timer(1000,/->self.checkWifiScan())
+    end
+
+    def checkWifiScan()
+        # Check if scan is complete, retry every second until done
+        var r = tasmota.cmd("WiFiScan",true)
+        var s = r["WiFiScan"]
+        if s == "Scanning" || s == "Not Started"
+            print("[IMPROV] WiFi scan in progress, checking again in 1s...")
+            tasmota.set_timer(1000,/->self.checkWifiScan())
+        else
+            print("[IMPROV] WiFi scan ready, reading results")
+            self.readWifiScan()
+        end
     end
 
     def readWifiScan()
         var r = tasmota.cmd("WiFiScan",true)
         var s = r["WiFiScan"]
         if  s == "Not Started"
+            print("[IMPROV] WiFi scan not started, starting now...")
+            self.AP_list = nil  # Ensure no old data
             self.startWifiScan()
             self.running_WiFi_scan = true
             return false
         elif s == "Scanning"
+            print("[IMPROV] WiFi scan still in progress, please wait...")
+            self.AP_list = nil  # Ensure no old data is sent while scanning
             return false
         end
         self.running_WiFi_scan = false
+        # Only update AP_list if we have results
+        if s == nil || size(s) == 0
+            print("[IMPROV] WiFi scan returned no results")
+            self.AP_list = []
+            return true
+        end
         self.AP_list = []
         for i:range(1,size(s))
             var e = s[f"NET{i}"]
@@ -180,7 +213,9 @@ class IMPROV : Driver
             var AP = [e["SSId"],e["Signal"],enc]
             self.AP_list.push(AP)
         end
-        print(self.AP_list)
+        print("[IMPROV] WiFi scan complete, found", size(self.AP_list), "networks")
+        print("[IMPROV] AP_list:", self.AP_list)
+        return true
     end
 
     def useCredentials()
@@ -197,12 +232,22 @@ class IMPROV : Driver
     end
 
     def sendAPInfo()
+        # Safety check: should never be called if AP_list is nil
+        print("[IMPROV-DEBUG] sendAPInfo called, AP_list type:", type(self.AP_list), "is nil:", self.AP_list == nil)
+        if self.AP_list == nil
+            print("[IMPROV-ERROR] sendAPInfo called with nil AP_list!")
+            return
+        end
+
+        print("[IMPROV-DEBUG] AP_list size:", size(self.AP_list))
         var buf = bytes("040004") # is the termination command
         if size(self.AP_list) != 0
             var AP = self.AP_list[0]
             self.AP_list = self.AP_list[1..]
             buf = self.encodeRPC(4,AP)
+            print("[IMPROV-DEBUG] Sending network:", AP[0])
         else
+            print("[IMPROV-DEBUG] AP_list is empty, sending termination")
             self.AP_list = nil
         end
         self.send_buffer = buf
@@ -235,8 +280,8 @@ class IMPROV : Driver
             print("need more data in RPC",self.msg_buffer[1]+3,size(self.msg_buffer))
             return
         end
-        print("msg_buffer complete with size", size(self.msg_buffer))
-        
+        print("[IMPROV] msg_buffer complete with size", size(self.msg_buffer))
+
         var len = self.msg_buffer[1]
         var chksum = self.chksum(self.msg_buffer[0..len+1])
         if chksum != self.msg_buffer[len+2]
@@ -249,7 +294,14 @@ class IMPROV : Driver
         elif self.msg_buffer[0] == 3
             self.sendDevInfo()
         elif self.msg_buffer[0] == 4
-            self.readWifiScan()
+            # Request WiFi networks - check if scan is ready
+            var scan_ready = self.readWifiScan()
+            if scan_ready == true
+                # Scan results are ready, trigger sending
+                print("[IMPROV] WiFi scan ready, will send AP list")
+            else
+                print("[IMPROV] WiFi scan not ready yet, no data will be sent")
+            end
         else
         print("Unhandled command", self.msg_buffer[0])
         end
@@ -363,11 +415,14 @@ class IMPROV : Driver
             end
         elif op == 227
             print("MAC:",cbuf[1..cbuf[0]])
-            self.readWifiScan()
+            self.startWifiScan()
         elif op == 228
-            print("Disconnected")
+            print("[IMPROV] Disconnected")
             self.pin_ready = false
-            self.imp_state = 1;
+            self.imp_state = 1
+            self.AP_list = nil  # Clear AP list on disconnect
+            self.send_buffer = nil  # Clear send buffer
+            self.running_WiFi_scan = false  # Reset scan state
         elif op == 229
             print("Status:",cbuf[1..cbuf[0]])
         end
