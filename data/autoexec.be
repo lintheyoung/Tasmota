@@ -1,7 +1,7 @@
-# AWS IoT Stability Test - autoexec.be v5.2.0
-# Purpose: Minimal configuration to avoid restart loops
+# AWS IoT Bidirectional Test - autoexec.be v5.3.0
+# Purpose: Stability test + remote control capability
 
-var SCRIPT_VERSION = "5.2.0"
+var SCRIPT_VERSION = "5.3.0"
 var DEVICE_ID = "IoT-Gateway-000011"
 var MQTT_ENDPOINT = "a1f8xc5wo59rp8-ats.iot.ap-southeast-1.amazonaws.com"
 
@@ -28,6 +28,10 @@ end
 
 tasmota.log("✅ Configuration complete", 2)
 
+# Use mqtt.subscribe() to subscribe to control topic
+import mqtt
+mqtt.subscribe("test/control/" + DEVICE_ID)
+
 # ============================================================
 # MQTT Stability Monitor - Simplified
 # ============================================================
@@ -37,17 +41,27 @@ class MQTTStabilityMonitor
     var message_count
     var last_publish_time
     var start_time
+    var control_topic
+    var subscribed
 
     def init(interval_sec)
         self.test_interval = interval_sec * 1000
         self.message_count = 0
         self.last_publish_time = tasmota.millis() + 15000  # First message after 15s
         self.start_time = tasmota.millis()
+        self.control_topic = "test/control/" + DEVICE_ID
+        self.subscribed = false
         tasmota.log("Stability Monitor started (30s interval)", 2)
     end
 
     def every_second()
         var now = tasmota.millis()
+
+        # Log subscription status once after 15s
+        if !self.subscribed && now - self.start_time >= 15000
+            tasmota.log("📥 Listening on: " + self.control_topic, 2)
+            self.subscribed = true
+        end
 
         if now - self.last_publish_time >= self.test_interval
             self.send_message()
@@ -72,10 +86,74 @@ class MQTTStabilityMonitor
             tasmota.log("📊 Stats: " + str(self.message_count) + " messages, " + str(uptime/60) + " min uptime", 2)
         end
     end
+
+    def mqtt_data(topic, idx, payload_s, payload_b)
+        # Handle incoming control messages
+        tasmota.log("🔍 MQTT Data: topic=" + topic + ", payload=" + payload_s, 2)
+
+        if topic == self.control_topic
+            tasmota.log("📩 Control received: " + payload_s, 2)
+
+            import json
+            var cmd = json.load(payload_s)
+
+            if cmd == nil
+                tasmota.log("⚠️ Invalid JSON", 2)
+                self.respond('error', {'msg': 'Invalid JSON'})
+                return true
+            end
+
+            # Process commands
+            if cmd.find('action') != nil
+                var action = cmd['action']
+                tasmota.log("🎯 Action: " + action, 2)
+
+                if action == 'ping'
+                    self.respond('pong', {'msg_count': self.message_count, 'uptime': (tasmota.millis() - self.start_time) / 1000})
+                elif action == 'reset_counter'
+                    self.message_count = 0
+                    self.respond('counter_reset', {'status': 'ok'})
+                elif action == 'status'
+                    self.respond('status_report', {
+                        'version': SCRIPT_VERSION,
+                        'msg_count': self.message_count,
+                        'uptime': (tasmota.millis() - self.start_time) / 1000,
+                        'interval': self.test_interval / 1000
+                    })
+                elif action == 'set_interval'
+                    if cmd.find('value') != nil
+                        self.test_interval = cmd['value'] * 1000
+                        self.respond('interval_updated', {'interval': cmd['value']})
+                    end
+                else
+                    self.respond('error', {'msg': 'Unknown action: ' + action})
+                end
+            else
+                self.respond('error', {'msg': 'Missing action field'})
+            end
+
+            return true  # Message handled
+        end
+
+        return false  # Not our message
+    end
+
+    def respond(response_type, data)
+        import json
+        var payload = json.dump({
+            'type': response_type,
+            'data': data,
+            'timestamp': tasmota.rtc()['local']
+        })
+        tasmota.cmd("Publish test/response/" + DEVICE_ID + " " + payload)
+        tasmota.log("📨 Response: " + response_type, 2)
+    end
 end
 
 var monitor = MQTTStabilityMonitor(30)
 tasmota.add_driver(monitor)
 
 tasmota.log("🚀 Monitoring started - first message in 15s", 2)
+tasmota.log("🎛️ Control topic: test/control/" + DEVICE_ID, 2)
+tasmota.log("📨 Response topic: test/response/" + DEVICE_ID, 2)
 tasmota.log("==========================================", 2)
