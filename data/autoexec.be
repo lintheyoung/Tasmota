@@ -281,18 +281,51 @@ class VirtualVibrationSensor
 
         # Handle Shadow Delta (command from AWS IoT)
         if topic == self.delta_topic
-            tasmota.log("📩 Delta received for " + self.shadow_name, 2)
+            # 记录接收时间（毫秒级）
+            var receive_time_ms = tasmota.millis()
+            var receive_time_s = tasmota.rtc()['local']
+
+            tasmota.log("==========================================", 2)
+            tasmota.log("📩 MQTT COMMAND RECEIVED", 2)
+            tasmota.log("==========================================", 2)
+            tasmota.log("📍 Topic: " + topic, 2)
+            tasmota.log("📦 Raw Payload: " + payload_s, 2)
+            tasmota.log("⏰ Device Time: " + str(receive_time_s) + " (" + str(receive_time_ms) + "ms)", 2)
 
             var delta = json.load(payload_s)
 
             if delta == nil
                 tasmota.log("⚠️ Invalid JSON in delta", 2)
+                tasmota.log("==========================================", 2)
                 return true
+            end
+
+            # 提取 AWS 时间戳并计算延迟
+            var aws_timestamp = delta.find('timestamp')
+            if aws_timestamp != nil
+                # AWS timestamp 是 UTC，设备时间是 UTC+8
+                var aws_time_utc8 = aws_timestamp + 28800  # 加8小时
+                var latency = receive_time_s - aws_time_utc8
+                tasmota.log("📡 AWS Timestamp (UTC): " + str(aws_timestamp), 2)
+                tasmota.log("📡 AWS Time (UTC+8): " + str(aws_time_utc8), 2)
+                tasmota.log("⚡ Network Latency: " + str(latency) + " seconds", 2)
+
+                if latency < 0
+                    tasmota.log("⚠️ Time sync issue detected (negative latency)", 2)
+                elif latency < 1
+                    tasmota.log("✅ Excellent latency (< 1s)", 2)
+                elif latency < 2
+                    tasmota.log("⚠️ Good latency (1-2s)", 2)
+                else
+                    tasmota.log("❌ High latency (> 2s)", 2)
+                end
             end
 
             # Extract command and reqId
             var state = delta.find('state')
             if state == nil
+                tasmota.log("⚠️ Missing 'state' field in delta", 2)
+                tasmota.log("==========================================", 2)
                 return true
             end
 
@@ -301,12 +334,34 @@ class VirtualVibrationSensor
 
             if cmd == nil || req_id == nil
                 tasmota.log("⚠️ Missing cmd or reqId in delta", 2)
+                tasmota.log("==========================================", 2)
                 return true
             end
 
-            tasmota.log("🎯 Command: " + str(cmd) + " (reqId=" + req_id + ")", 2)
+            # 详细显示命令内容
+            tasmota.log("📋 Command Details:", 2)
+            tasmota.log("   └─ reqId: " + req_id, 2)
+
+            var action = cmd.find('action')
+            if action != nil
+                tasmota.log("   └─ action: " + action, 2)
+            end
+
+            var threshold = cmd.find('vibration_threshold')
+            if threshold != nil
+                tasmota.log("   └─ vibration_threshold: " + str(threshold), 2)
+            end
+
+            var sensitivity = cmd.find('sensitivity')
+            if sensitivity != nil
+                tasmota.log("   └─ sensitivity: " + sensitivity, 2)
+            end
+
+            tasmota.log("🎯 Full Command Object: " + str(cmd), 2)
+            tasmota.log("==========================================", 2)
 
             # Execute command
+            tasmota.log("⚙️ Executing command...", 2)
             self.execute_command(req_id, cmd)
             return true
         end
