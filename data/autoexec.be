@@ -91,6 +91,9 @@ class VirtualVibrationSensor
     var update_accepted_topic
     var initialized
 
+    # ACK tracking
+    var need_clear_ack  # Flag: true if we need to clear lastAckedReqId in next telemetry
+
     def init(device_id, shadow_name, gateway_thing, interval_sec)
         self.device_id = device_id
         self.shadow_name = shadow_name
@@ -106,6 +109,7 @@ class VirtualVibrationSensor
         self.event_count = 0
         self.last_trigger_time = nil
         self.initialized = false
+        self.need_clear_ack = false  # Initialize ACK clear flag
 
         # Timing
         self.telemetry_interval = interval_sec * 1000
@@ -134,7 +138,27 @@ class VirtualVibrationSensor
         # Send GET request to retrieve current shadow state (for reconnection recovery)
         tasmota.log("📡 Sending Shadow GET request for: " + self.shadow_name, 2)
         tasmota.cmd("Publish " + self.get_topic + " ")
+
+        # Clear any old lastAckedReqId from Shadow (prevent stale ACK issues)
+        # This ensures fresh ACK tracking after device restart
+        var initial_state = {
+            'deviceId': self.device_id,
+            'gatewayId': '435204e6-21c9-447d-ab6f-888c99b91926',
+            'status': self.status,
+            'battery': self.battery,
+            'vibration_detected': self.vibration_detected,
+            'vibration_level': self.vibration_level,
+            'threshold': self.vibration_threshold,
+            'sensitivity': self.sensitivity,
+            'event_count': self.event_count,
+            'last_trigger_time': self.last_trigger_time,
+            'timestamp': tasmota.rtc()['local']
+            # NOTE: Intentionally not including 'lastAckedReqId' to clear old ACK
+        }
+        self.update_shadow_reported(initial_state, false)
+
         self.initialized = true
+        tasmota.log("✅ Shadow initialized, old ACK cleared", 2)
     end
 
     def every_second()
@@ -196,6 +220,9 @@ class VirtualVibrationSensor
         end
 
         # Build telemetry payload (matching Python structure EXACTLY)
+        # IMPORTANT: Regular telemetry does NOT include 'lastAckedReqId'
+        # Only ACK messages (in execute_command) include 'lastAckedReqId'
+        # This prevents old ACK from overwriting new ACK in Shadow
         var telemetry = {
             'deviceId': self.device_id,              # CRITICAL: deviceId for APP to identify device
             'gatewayId': '435204e6-21c9-447d-ab6f-888c99b91926',  # Gateway device ID
@@ -208,9 +235,18 @@ class VirtualVibrationSensor
             'event_count': self.event_count,
             'last_trigger_time': self.last_trigger_time,
             'timestamp': tasmota.rtc()['local']
+            # NOTE: No 'lastAckedReqId' here - only in ACK messages
         }
 
-        # Update shadow reported state
+        # If we just sent an ACK, clear it from Shadow in this telemetry
+        # This prevents the same ACK from being received multiple times by browser
+        if self.need_clear_ack
+            telemetry['lastAckedReqId'] = nil  # Explicitly set to null to remove from Shadow
+            self.need_clear_ack = false        # Reset flag
+            tasmota.log("🧹 Clearing lastAckedReqId from Shadow", 2)
+        end
+
+        # Update shadow reported state (false = don't clear desired state)
         self.update_shadow_reported(telemetry, false)
         self.telemetry_sent += 1
     end
@@ -218,20 +254,24 @@ class VirtualVibrationSensor
     def update_shadow_reported(reported, clear_desired)
         import json
 
+        # This method does NOT modify the 'reported' data
+        # It only wraps it in Shadow Update format
+        # Caller is responsible for including/excluding 'lastAckedReqId'
         var payload = nil
 
         if clear_desired
-            # Clear desired state to prevent delta loop
+            # Clear desired state to prevent delta loop (used for ACK)
             payload = json.dump({
                 'state': {
-                    'reported': reported,
+                    'reported': reported,  # Use data as-is from caller
                     'desired': nil  # This clears the desired state
                 }
             })
         else
+            # Don't clear desired state (used for telemetry)
             payload = json.dump({
                 'state': {
-                    'reported': reported
+                    'reported': reported  # Use data as-is from caller
                 }
             })
         end
@@ -321,7 +361,7 @@ class VirtualVibrationSensor
                 end
             end
 
-            # Extract command and reqId
+            # Extract command and req_id
             var state = delta.find('state')
             if state == nil
                 tasmota.log("⚠️ Missing 'state' field in delta", 2)
@@ -329,14 +369,22 @@ class VirtualVibrationSensor
                 return true
             end
 
-            var cmd = state.find('cmd')
-            var req_id = state.find('reqId')
+            # Support both 'req_id' (new WebSocket MQTT) and 'reqId' (old HTTP REST)
+            var req_id = state.find('req_id')
+            if req_id == nil
+                req_id = state.find('reqId')
+            end
 
-            if cmd == nil || req_id == nil
-                tasmota.log("⚠️ Missing cmd or reqId in delta", 2)
+            if req_id == nil
+                tasmota.log("⚠️ Missing req_id or reqId in delta", 2)
                 tasmota.log("==========================================", 2)
                 return true
             end
+
+            # The entire 'state' object IS the command
+            # It contains action, sensitivity, vibration_threshold, etc.
+            # No need to look for a separate 'cmd' wrapper
+            var cmd = state
 
             # 详细显示命令内容
             tasmota.log("📋 Command Details:", 2)
@@ -396,10 +444,13 @@ class VirtualVibrationSensor
         end
 
         # Send ACK with COMPLETE state (including all telemetry fields)
+        # CRITICAL: ACK messages MUST include 'lastAckedReqId' to match browser's request
+        # This supports both UUID format (HTTP REST) and req_* format (WebSocket MQTT)
+        # Device doesn't need to know reqId format - just echo it back as-is
         var result = {
             'deviceId': self.device_id,
             'gatewayId': '435204e6-21c9-447d-ab6f-888c99b91926',
-            'lastAckedReqId': req_id,
+            'lastAckedReqId': req_id,  # MUST include: browser uses this to match ACK
             'battery': self.battery,
             'status': self.status,
             'vibration_detected': self.vibration_detected,
@@ -411,8 +462,14 @@ class VirtualVibrationSensor
             'timestamp': tasmota.rtc()['local']
         }
 
-        self.update_shadow_reported(result, true)  # Clear desired state
-        tasmota.log("✅ Command ACK sent: " + action, 2)
+        # Clear desired state (true) to prevent delta loop
+        self.update_shadow_reported(result, true)
+
+        # Set flag to clear lastAckedReqId in next telemetry
+        # This prevents the same ACK from being sent to browser multiple times
+        self.need_clear_ack = true
+
+        tasmota.log("✅ Command ACK sent: " + action + " (reqId=" + req_id + ")", 2)
     end
 
     def send_error(req_id, error_code, error_msg)
