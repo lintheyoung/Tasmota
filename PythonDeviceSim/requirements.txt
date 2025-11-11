@@ -1,0 +1,8 @@
+# AWS IoT Python SDK
+awsiotsdk==1.21.6
+
+# AWS CRT (Common Runtime) - AWS IoT SDK 依赖
+awscrt==0.20.11
+
+# 可选：更好的日志输出
+coloredlogs==15.0.1
