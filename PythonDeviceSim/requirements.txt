@@ -6,3 +6,7 @@ awscrt==0.20.11
 
 # 可选：更好的日志输出
 coloredlogs==15.0.1
+
+# GUI 界面
+customtkinter==5.2.1
+Pillow==10.1.0

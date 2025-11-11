@@ -12,6 +12,10 @@
 - 相同的命令处理和 ACK 机制
 - 相同的统计追踪功能
 
+🎨 **两种运行模式**：
+- **GUI 版本** (gui_app.py) - 可视化界面，实时监控
+- **命令行版本** (main.py) - 适合服务器和自动化
+
 ## 🎯 使用场景
 
 - **后端开发测试**：无需 ESP32 硬件即可测试 AWS IoT 交互
@@ -32,15 +36,28 @@ python3 -m venv venv
 source venv/bin/activate  # macOS/Linux
 # 或 venv\Scripts\activate  # Windows
 
-# 安装依赖
+# 安装依赖（包括 GUI 库）
 pip install -r requirements.txt
 ```
 
 ### 2. 运行模拟器
 
+**🎨 GUI 版本（推荐）- 可视化界面**：
+```bash
+python3 gui_app.py
+```
+- 实时数据面板
+- 可视化监控
+- 日志管理
+- 详细文档：[GUI_README.md](GUI_README.md)
+
+**⌨️ 命令行版本 - 适合服务器**：
 ```bash
 python3 main.py
 ```
+- 纯命令行输出
+- 适合后台运行
+- 资源占用低
 
 ### 3. 测试命令（使用 Web 控制面板）
 
