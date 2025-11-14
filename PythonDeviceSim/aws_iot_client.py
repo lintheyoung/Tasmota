@@ -22,11 +22,25 @@ class AWSIoTClient:
     AWS IoT MQTT 客户端封装
     """
 
-    def __init__(self):
-        """初始化 AWS IoT MQTT 客户端"""
+    def __init__(self, cert_file: str = None, key_file: str = None, ca_file: str = None, thing_name: str = None):
+        """
+        初始化 AWS IoT MQTT 客户端
+
+        Args:
+            cert_file: 设备证书文件路径（可选，默认使用 config.py 中的配置）
+            key_file: 私钥文件路径（可选，默认使用 config.py 中的配置）
+            ca_file: CA 证书文件路径（可选，默认使用 config.py 中的配置）
+            thing_name: AWS IoT Thing Name（可选，默认使用 config.py 中的配置）
+        """
         self.mqtt_connection = None
         self.connected = False
         self.connect_lock = threading.Lock()
+
+        # 证书路径（支持自定义）
+        self.cert_file = cert_file or CERT_FILE
+        self.key_file = key_file or KEY_FILE
+        self.ca_file = ca_file or ROOT_CA_FILE
+        self.thing_name = thing_name or GATEWAY_THING
 
         # 回调函数
         self.on_connected_callback = None
@@ -36,12 +50,12 @@ class AWSIoTClient:
         logger.info("=" * 60)
         logger.info("🔧 Initializing AWS IoT MQTT Client")
         logger.info("=" * 60)
-        logger.info(f"Thing Name: {GATEWAY_THING}")
+        logger.info(f"Thing Name: {self.thing_name}")
         logger.info(f"Endpoint: {MQTT_ENDPOINT}")
         logger.info(f"Port: {MQTT_PORT}")
-        logger.info(f"Certificate: {CERT_FILE}")
-        logger.info(f"Private Key: {KEY_FILE}")
-        logger.info(f"Root CA: {ROOT_CA_FILE}")
+        logger.info(f"Certificate: {self.cert_file}")
+        logger.info(f"Private Key: {self.key_file}")
+        logger.info(f"Root CA: {self.ca_file}")
         logger.info("=" * 60)
 
     def connect(self) -> bool:
@@ -58,10 +72,10 @@ class AWSIoTClient:
             self.mqtt_connection = mqtt_connection_builder.mtls_from_path(
                 endpoint=MQTT_ENDPOINT,
                 port=MQTT_PORT,
-                cert_filepath=CERT_FILE,
-                pri_key_filepath=KEY_FILE,
-                ca_filepath=ROOT_CA_FILE,
-                client_id=GATEWAY_THING,
+                cert_filepath=self.cert_file,
+                pri_key_filepath=self.key_file,
+                ca_filepath=self.ca_file,
+                client_id=self.thing_name,
                 clean_session=False,
                 keep_alive_secs=MQTT_KEEPALIVE,
                 on_connection_interrupted=self._on_connection_interrupted,

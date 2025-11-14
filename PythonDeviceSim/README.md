@@ -44,12 +44,13 @@ pip install -r requirements.txt
 
 **🎨 GUI 版本（推荐）- 可视化界面**：
 ```bash
-python3 gui_app.py
+python3 gui_main.py
 ```
 - 实时数据面板
 - 可视化监控
 - 日志管理
-- 详细文档：[GUI_README.md](GUI_README.md)
+- **证书切换功能**：支持在界面中选择不同的证书文件
+- 配置自动保存和加载
 
 **⌨️ 命令行版本 - 适合服务器**：
 ```bash
@@ -112,6 +113,8 @@ PythonDeviceSim/
 
 ## 🔧 配置说明
 
+### 基本配置
+
 所有配置在 `config.py` 中，与 `autoexec.be` 完全一致：
 
 | 配置项 | 值 | 说明 |
@@ -125,6 +128,51 @@ PythonDeviceSim/
 | `MQTT_QOS_TELEMETRY` | `0` | 遥测数据 QoS（与 Berry 一致）|
 | `MQTT_QOS_COMMAND` | `0` | 命令响应 QoS（与 Berry 一致）|
 | `LOG_LEVEL` | `DEBUG` | 日志级别 |
+
+### 🔐 GUI 证书切换功能
+
+GUI 版本支持在界面中切换证书文件，无需修改代码：
+
+**使用步骤**：
+
+1. **启动 GUI**：
+   ```bash
+   python3 gui_main.py
+   ```
+
+2. **配置证书**：
+   - 在顶部"🔐 证书配置"区域，点击"浏览"按钮选择证书文件
+   - 支持选择：
+     - **设备证书**（.pem / .crt）：设备的公钥证书
+     - **私钥文件**（.key / .pem）：设备的私钥
+     - **CA证书**（.pem / .crt）：AWS 根证书
+
+3. **验证证书**：
+   - 点击"验证证书"按钮检查证书文件是否有效
+   - 显示证书主体、有效期等信息
+
+4. **保存配置**：
+   - 点击"保存配置"按钮将证书路径保存到 `gui_config.json`
+   - 下次启动时自动加载
+
+5. **启动连接**：
+   - 点击"启动模拟器"使用选择的证书连接 AWS IoT
+
+**支持的证书类型**：
+- ✅ **ECC P-256**（椭圆曲线，推荐）- 当前使用
+- ✅ **RSA 2048/4096**（如果您的 AWS IoT Thing 使用 RSA 证书）
+- ✅ 任何 AWS IoT 颁发的有效证书
+
+**配置文件**：
+- 证书配置保存在 `gui_config.json`
+- 格式：
+  ```json
+  {
+    "cert_path": "/path/to/device.cert.pem",
+    "key_path": "/path/to/device.private.key",
+    "ca_path": "/path/to/AmazonRootCA1.pem"
+  }
+  ```
 
 ## 📡 与 ESP32 设备的对比
 

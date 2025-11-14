@@ -38,7 +38,7 @@ class VirtualVibrationSensor:
         # 设备信息
         self.device_id = VIRTUAL_DEVICE['device_id']
         self.shadow_name = VIRTUAL_DEVICE['shadow_name']
-        self.gateway_thing = GATEWAY_THING
+        self.gateway_thing = getattr(mqtt_client, 'thing_name', GATEWAY_THING)  # 从 mqtt_client 获取或使用默认值
         self.gateway_id = GATEWAY_DEVICE_ID
 
         # 传感器状态

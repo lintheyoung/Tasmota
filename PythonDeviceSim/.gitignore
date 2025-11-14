@@ -20,6 +20,10 @@ build/
 
 # Logs
 *.log
+simulator_log_*.txt
+
+# Config
+gui_config.json
 
 # macOS
 .DS_Store
