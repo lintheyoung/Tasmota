@@ -8,8 +8,11 @@ venv/
 env/
 ENV/
 *.egg-info/
+
+# PyInstaller 构建输出
 dist/
 build/
+*.spec.lock
 
 # IDE
 .vscode/
